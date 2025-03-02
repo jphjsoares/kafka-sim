@@ -1,0 +1,4 @@
+confluent-kafka>=1.4.0
+python-dotenv
+uuid
+jsonschema

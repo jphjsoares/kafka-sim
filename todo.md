@@ -1,0 +1,4 @@
+- Use strimzi.io for kafka deployment
+- add health checks for producers and consumers
+- delete python images, when restarting the cluster
+- use distributed cache to handle high volume of messages, store IDs (deduplication), TTL to expire old IDs
