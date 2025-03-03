@@ -3,6 +3,9 @@ kind: ConfigMap
 metadata:
   name: kafka-config
 data:
+  # The Kafka broker internal address follows: <kafka_cluster>-kafka-boostrap.<kafka_namespace>.svc.cluster.local
+  # If the cluster / namespace change, make sure to change this as well
+  KAFKA_BROKER_INTERNAL_ADDR: "kafka-sim-kafka-bootstrap.kafka.svc.cluster.local"
   KAFKA_BROKER_NAME: "kafka-sim"
   KAFKA_BROKER_PORT: "9092"
   KAFKA_TOPIC: "mytopic"

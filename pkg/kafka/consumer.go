@@ -3,6 +3,7 @@ package kafka
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -15,93 +16,98 @@ import (
 )
 
 type KafkaConsumer struct {
-	broker       []string
+	brokers      []string
 	topic        string
 	dlqTopic     string
-	reader       *kafka.Reader
-	dlqWriter    *kafka.Writer
-	running      bool
-	validCounter   int
+	groupID      string
+	consumer     *kafka.Reader
+	dlqProducer  *kafka.Writer
+	validCounter int
 	invalidCounter int
+	running      bool
 }
 
-
-// TODO:
-// This is still not working (not consuming), so I will need to fix it later.
-func NewKafkaConsumer(brokers []string, topic string, dlqTopic string) (*KafkaConsumer, error) {
+func NewKafkaConsumer(brokers []string, topic string, dlqTopic string) *KafkaConsumer {
 	return &KafkaConsumer{
-		brokers, 
-		topic, 
-		dlqTopic,
-		kafka.NewReader(kafka.ReaderConfig{
-			Brokers:   brokers,
-			GroupID:   "myconsumergroup",
-			Topic:     topic,
-			MinBytes:  10e3,
-			MaxBytes:  10e6,
-		}),
-		&kafka.Writer{
-			Addr:     kafka.TCP(brokers...),
-			Topic:    dlqTopic,
-			Balancer: &kafka.LeastBytes{},
-		}, 
-		true, 
-		0, 
-		0,
-	}, nil
-}
-
-func (kc *KafkaConsumer) Consume() {
-	log.Println("Consumer started and waiting for messages...")
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-c
-		log.Println("Shutdown signal received")
-		kc.running = false
-		kc.reader.Close()
-		kc.dlqWriter.Close()
-	}()
-
-	for kc.running {
-		msg, err := kc.reader.ReadMessage(context.Background())
-		if err != nil {
-			log.Printf("Consumer error: %v", err)
-			break
-		}
-		kc.processMessage(msg)
+		brokers:  brokers,
+		topic:    topic,
+		dlqTopic: dlqTopic,
+		groupID:  "myconsumergroup",
+		running:  true,
 	}
 }
 
-func (kc *KafkaConsumer) processMessage(msg kafka.Message) {
-	message := &protobuf.Message{}
-	if err := proto.Unmarshal(msg.Value, message); err != nil {
-		kc.sendToDLQ(msg, err)
-		return
-	}
+func (kc *KafkaConsumer) createConsumer() {
+	kc.consumer = kafka.NewReader(kafka.ReaderConfig{
+		Brokers:  kc.brokers,
+		Topic:    kc.topic,
+		GroupID:  kc.groupID,
+	})
 
-	if message.Id == "" || message.Content == "" || message.Timestamp == "" {
-		err := log.Output(1, "Invalid protobuf message structure")
-		kc.sendToDLQ(msg, err)
-		return
+	kc.dlqProducer = &kafka.Writer{
+		Addr:  kafka.TCP(kc.brokers...),
+		Topic: kc.dlqTopic,
 	}
+}
 
-	log.Printf("Consumed valid message: %v", message)
-	kc.validCounter++
-	log.Printf("Valid messages: %d", kc.validCounter)
-	log.Printf("Invalid messages: %d", kc.invalidCounter)
+func (kc *KafkaConsumer) shutdown() {
+	log.Println("Shutdown received. Closing consumer...")
+	kc.running = false
+	kc.consumer.Close()
+	kc.dlqProducer.Close()
 }
 
 func (kc *KafkaConsumer) sendToDLQ(msg kafka.Message, err error) {
-	failedMessage := map[string]interface{}{
+	failedMessage := map[string]string{
 		"original_message": string(msg.Value),
 		"error":            err.Error(),
 		"timestamp":        time.Now().Format(time.RFC3339),
 	}
-	encoded, _ := json.Marshal(failedMessage)
-	kc.dlqWriter.WriteMessages(context.Background(), kafka.Message{
-		Value: encoded,
+	failedMessageBytes, _ := json.Marshal(failedMessage)
+
+	kc.dlqProducer.WriteMessages(context.Background(), kafka.Message{
+		Value: failedMessageBytes,
 	})
 	kc.invalidCounter++
-	log.Printf("Sent to DLQ: %s", encoded)
+	log.Printf("Sent to DLQ: %s", failedMessage)
+}
+
+func (kc *KafkaConsumer) processMessage(msg kafka.Message) {
+	var message protobuf.Message
+	if err := proto.Unmarshal(msg.Value, &message); err != nil {
+		kc.sendToDLQ(msg, fmt.Errorf("failed to unmarshal message: %v", err))
+		return
+	}
+
+	// Simulate message processing
+	log.Printf("Consumed valid message: %v", message.Content)
+	time.Sleep(50 * time.Millisecond) // Simulate processing delay
+
+	kc.validCounter++
+	log.Printf("Consumed messages: %d", kc.validCounter)
+	log.Printf("Invalid messages: %d", kc.invalidCounter)
+}
+
+func (kc *KafkaConsumer) Consume() {
+	kc.createConsumer()
+	defer kc.shutdown()
+
+	// Handle graceful shutdown
+	sigchan := make(chan os.Signal, 1)
+	signal.Notify(sigchan, syscall.SIGINT, syscall.SIGTERM)
+
+	log.Println("Consumer started and waiting for messages...")
+	for kc.running {
+		select {
+		case <-sigchan:
+			kc.shutdown()
+		default:
+			msg, err := kc.consumer.ReadMessage(context.Background())
+			if err != nil {
+				log.Printf("Failed to read message: %v", err)
+				continue
+			}
+			kc.processMessage(msg)
+		}
+	}
 }

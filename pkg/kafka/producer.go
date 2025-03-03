@@ -37,7 +37,7 @@ func (kp *KafkaProducer) createMessage() *protobuf.Message {
 	return &protobuf.Message{
 		// TODO : use uuid
 		Id:        fmt.Sprintf("%d", rand.Intn(1000000)), 
-		Content:   "Hello corti platform team!",
+		Content:   "Hello World!",
 		Timestamp: time.Now().Format(time.RFC3339),
 	}
 }
