@@ -1,40 +1,51 @@
 #!/bin/bash
-set -e
 
-export $(grep -v '^#' .env | xargs)
-
+set -e 
 PRODUCER_REPLICAS=${1:-1}
 CONSUMER_REPLICAS=${2:-1}
 
-echo "Cleaning up existing resources..."
-kubectl delete deployment kafka-broker kafka-producer kafka-consumer --ignore-not-found
-kubectl delete service kafka-broker --ignore-not-found
+echo "🧹 Starting cleanup..."
 
-echo "Building and loading images into kind cluster..."
+# Delete Kubernetes resources
+echo "🗑️ Deleting Kubernetes resources..."
+pushd deployments
+kubectl delete -f producer-consumer.yaml --ignore-not-found=true
+kubectl delete -f kafka-deployment.yaml --ignore-not-found=true
+kubectl delete -f kafka-config.yaml --ignore-not-found=true
+popd
+
+# Remove Docker images
+echo "🗑️ Removing Docker images..."
+docker rmi -f producer-consumer:latest 2>/dev/null || true
+
+echo "🏗️ Building and loading images into kind cluster..."
 docker build -t producer-consumer:latest -f Dockerfile .
 kind load docker-image producer-consumer:latest
 
-echo "Deploying Kafka..."
+pushd deployments
+echo "⚙️ Applying config map..."
+kubectl apply -f kafka-config.yaml
+
+echo "✉️ Deploying Kafka..."
+export KAFKA_BROKER_NAME=$(kubectl get configmap kafka-config -o jsonpath='{.data.KAFKA_BROKER_NAME}')
+export KAFKA_BROKER_PORT=$(kubectl get configmap kafka-config -o jsonpath='{.data.KAFKA_BROKER_PORT}')
+export KAFKA_TOPIC=$(kubectl get configmap kafka-config -o jsonpath='{.data.KAFKA_TOPIC}')
+export KAFKA_DLQ_TOPIC=$(kubectl get configmap kafka-config -o jsonpath='{.data.KAFKA_DLQ_TOPIC}')
+
+echo "✉️ Creating Kafka namespace"
+kubectl create namespace kafka --dry-run=client -o yaml | kubectl apply -f -
+
+echo "✉️ Applying Strimzi install files and some CRDs"
+kubectl create -f 'https://strimzi.io/install/latest?namespace=kafka' -n kafka --dry-run=client -o yaml | kubectl apply -f -
+
+echo "✉️ Applying Kafka cluster defined in .yaml file"
 envsubst < kafka-deployment.yaml | kubectl apply -f -
 
-echo "Waiting for Kafka to be ready..."
-kubectl wait --for=condition=available --timeout=60s deployment/kafka-broker
+echo "✉️ Waiting for Kafka cluster to be ready..."
+kubectl wait kafka/${KAFKA_BROKER_NAME} --for=condition=Ready --timeout=300s -n kafka 
 
-KAFKA_POD=$(kubectl get pods -l app=$KAFKA_BROKER_SERVICE_NAME -o jsonpath='{.items[0].metadata.name}')
-create_topic() {
-  TOPIC_NAME=$1
-  echo "Creating Kafka topic: $TOPIC_NAME..."
-  kubectl exec -it "$KAFKA_POD" -- /opt/kafka/bin/kafka-topics.sh --create \
-    --bootstrap-server "localhost:$KAFKA_BROKER_PORT" \
-    --replication-factor 1 \
-    --partitions 10 \
-    --topic "$TOPIC_NAME"
-}
-
-create_topic "$KAFKA_TOPIC"
-create_topic "$KAFKA_DLQ_TOPIC"
-
-echo "Deploying producer with $PRODUCER_REPLICAS replicas and consumer with $CONSUMER_REPLICAS replicas..."
+echo "🚀 Applying consumer and producer..."
 PRODUCER_REPLICAS=$PRODUCER_REPLICAS CONSUMER_REPLICAS=$CONSUMER_REPLICAS envsubst < producer-consumer.yaml | kubectl apply -f -
+popd
 
-echo "All services deployed successfully!"
+echo "✅ All services deployed successfully!"

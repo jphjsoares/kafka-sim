@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package protobuf;
+
+option go_package = "github.com/jphjsoares/kafka-sim/pkg/protobuf";
+
+message Message {
+  string id = 1;
+  string content = 2;
+  string timestamp = 3;
+}

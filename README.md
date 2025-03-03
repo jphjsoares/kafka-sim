@@ -1,7 +1,13 @@
 # Setup
 
 ```bash
+# Create a cluster
 kind create cluster
+
+# Note: if it's the first time running, you must apply the config map first, in order for the setup.sh to not fail
+pushd deployments
+kubectl apply -f kafka-config.yaml
+popd
 
 # Setup kubernetes cluster
 chmod +x setup.sh
@@ -9,15 +15,4 @@ chmod +x setup.sh
 
 # To delete cluster
 kind delete cluster
-```
-
-# Executing
-
-Now, consumers and producers are exchanging messages. Use the `monitor.py` to get the stats:
-
-```bash
-python3 -m venv env/
-source env/bin/activate
-python3 -m pip install kubernetes
-python3 monitor.py
 ```
