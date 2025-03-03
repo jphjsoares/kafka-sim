@@ -1,3 +1,2 @@
-- add health checks for producers and consumers
 - use distributed cache to handle high volume of messages, store IDs (deduplication), TTL to expire old IDs
 - use prometheus to get and log metrics

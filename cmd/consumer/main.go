@@ -15,6 +15,9 @@ func main() {
 		panic("KAFKA_BROKER_INTERNAL_ADDR, KAFKA_TOPIC, KAFKA_DLQ_TOPIC must be set")
 	}
 
+	// goroutine for healthcheck
+	go kafka.StartHealthServer([]string{kafkaBrokerHost}, topic)
+
 	// Initialize the Kafka consumer
 	consumer := kafka.NewKafkaConsumer(
 		[]string{kafkaBrokerHost},
