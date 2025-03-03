@@ -10,30 +10,55 @@ import (
 	"syscall"
 	"time"
 
+	"net/http"
+
 	"github.com/jphjsoares/kafka-sim/pkg/protobuf"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/segmentio/kafka-go"
 	"google.golang.org/protobuf/proto"
 )
 
 type KafkaConsumer struct {
-	brokers      []string
-	topic        string
-	dlqTopic     string
-	groupID      string
-	consumer     *kafka.Reader
-	dlqProducer  *kafka.Writer
-	validCounter int
-	invalidCounter int
-	running      bool
+	brokers       []string
+	topic         string
+	dlqTopic      string
+	groupID       string
+	consumer      *kafka.Reader
+	dlqProducer   *kafka.Writer
+	validCounter  *prometheus.CounterVec
+	invalidCounter *prometheus.CounterVec
+	running       bool
 }
 
 func NewKafkaConsumer(brokers []string, topic string, dlqTopic string) *KafkaConsumer {
+	validCounter := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "kafka_consumer_valid_messages_total",
+			Help: "Total number of valid messages consumed by the Kafka consumer",
+		},
+		[]string{"topic", "group_id"}, // Labels to categorize the metric
+	)
+	invalidCounter := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "kafka_consumer_invalid_messages_total",
+			Help: "Total number of invalid messages consumed by the Kafka consumer",
+		},
+		[]string{"topic", "group_id"}, // Labels to categorize the metric
+	)
+
+	// Register the counters with Prometheus
+	prometheus.MustRegister(validCounter)
+	prometheus.MustRegister(invalidCounter)
+
 	return &KafkaConsumer{
-		brokers:  brokers,
-		topic:    topic,
-		dlqTopic: dlqTopic,
-		groupID:  "myconsumergroup",
-		running:  true,
+		brokers:       brokers,
+		topic:         topic,
+		dlqTopic:      dlqTopic,
+		groupID:       "myconsumergroup",
+		validCounter:  validCounter,
+		invalidCounter: invalidCounter,
+		running:       true,
 	}
 }
 
@@ -68,7 +93,7 @@ func (kc *KafkaConsumer) sendToDLQ(msg kafka.Message, err error) {
 	kc.dlqProducer.WriteMessages(context.Background(), kafka.Message{
 		Value: failedMessageBytes,
 	})
-	kc.invalidCounter++
+	kc.invalidCounter.WithLabelValues(kc.topic, kc.groupID).Inc()
 	log.Printf("Sent to DLQ: %s", failedMessage)
 }
 
@@ -83,9 +108,7 @@ func (kc *KafkaConsumer) processMessage(msg kafka.Message) {
 	log.Printf("Consumed valid message: %v", message.Content)
 	time.Sleep(50 * time.Millisecond) // Simulate processing delay
 
-	kc.validCounter++
-	log.Printf("Consumed messages: %d", kc.validCounter)
-	log.Printf("Invalid messages: %d", kc.invalidCounter)
+	kc.validCounter.WithLabelValues(kc.topic, kc.groupID).Inc()
 }
 
 func (kc *KafkaConsumer) Consume() {
@@ -95,6 +118,12 @@ func (kc *KafkaConsumer) Consume() {
 	// Handle graceful shutdown
 	sigchan := make(chan os.Signal, 1)
 	signal.Notify(sigchan, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		http.Handle("/metrics", promhttp.Handler())
+		log.Println("Prometheus metrics exposed at http://localhost:8081/metrics")
+		log.Fatal(http.ListenAndServe(":8081", nil))
+	}()
 
 	log.Println("Consumer started and waiting for messages...")
 	for kc.running {

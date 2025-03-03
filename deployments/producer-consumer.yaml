@@ -43,6 +43,19 @@ spec:
                   name: kafka-config
                   key: KAFKA_TOPIC
 ---
+# Used for prometheus to scrape metrics
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-producer-service
+spec:
+  selector:
+    app: kafka-producer
+  ports:
+    - protocol: TCP
+      port: 8081 # Port for scraping Prometheus metrics
+      targetPort: 8081 # Container port for Prometheus metrics
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -92,3 +105,16 @@ spec:
                 configMapKeyRef:
                   name: kafka-config
                   key: KAFKA_DLQ_TOPIC
+---
+# Used for prometheus to scrape metrics
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-consumer-service
+spec:
+  selector:
+    app: kafka-consumer
+  ports:
+    - protocol: TCP
+      port: 8081 # Port for scraping Prometheus metrics
+      targetPort: 8081 # Container port for Prometheus metrics

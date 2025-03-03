@@ -11,6 +11,7 @@ echo "🗑️ Deleting Kubernetes resources..."
 pushd deployments
 kubectl delete -f producer-consumer.yaml --ignore-not-found=true
 kubectl delete -f kafka-deployment.yaml --ignore-not-found=true
+kubectl delete -f prometheus-deployment.yaml --ignore-not-found=true
 kubectl delete -f kafka-config.yaml --ignore-not-found=true
 popd
 
@@ -25,6 +26,9 @@ kind load docker-image producer-consumer:latest
 pushd deployments
 echo "⚙️ Applying config map..."
 kubectl apply -f kafka-config.yaml
+
+echo "👀 Deploying prometheus..."
+kubectl apply -f prometheus-deployment.yaml
 
 echo "✉️ Deploying Kafka..."
 export KAFKA_BROKER_NAME=$(kubectl get configmap kafka-config -o jsonpath='{.data.KAFKA_BROKER_NAME}')
