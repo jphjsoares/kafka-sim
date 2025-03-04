@@ -50,6 +50,9 @@ func NewKafkaProducer(brokers []string, topic string) *KafkaProducer {
 			Addr:     kafka.TCP(brokers...),
 			Topic:    topic,
 			Balancer: &kafka.LeastBytes{},
+			BatchSize: 50, // Send messages in batches of 50
+			BatchTimeout: 100 * time.Millisecond, // Wait up to 100ms to fill a batch
+			Async: true, // Send messages asynchronously
 		},
 		validCounter:   validCounter,
 		invalidCounter: invalidCounter,
@@ -75,26 +78,34 @@ func (kp *KafkaProducer) createMessage() *protobuf.Message {
 func (kp *KafkaProducer) GenerateMessages() {
 	log.Println("Start sending message bursts...")
 	for {
-		for range 50 {
+		log.Println("Sending batch...")
+		messages := make([]kafka.Message, 0, 50)
+		for i := 0; i < 50; i++ {
 			var message proto.Message
 			if rand.Float32() < 0.05 { // 5% chance of invalid message
 				kp.invalidCounter.WithLabelValues(kp.topic).Inc()
 				invalidMessage := map[string]string{"invalid_field": "Should be sent to DLQ!"}
 				messageBytes, _ := json.Marshal(invalidMessage)
-				kp.writer.WriteMessages(context.Background(), kafka.Message{
+				messages = append(messages, kafka.Message{
 					Value: messageBytes,
 				})
-				log.Printf("Produced invalid message: %s", invalidMessage)
 			} else {
 				kp.validCounter.WithLabelValues(kp.topic).Inc()
 				message = kp.createMessage()
 				messageBytes, _ := proto.Marshal(message)
-				kp.writer.WriteMessages(context.Background(), kafka.Message{
+				messages = append(messages, kafka.Message{
 					Value: messageBytes,
 				})
-				log.Printf("Produced valid message: %v", message)
 			}
 		}
+		// Write all messages in the batch at once
+		err := kp.writer.WriteMessages(context.Background(), messages...)
+		if err != nil {
+			log.Printf("Failed to write messages: %v", err)
+		} else {
+			log.Printf("Produced batch of %d messages", len(messages))
+		}
+
 		time.Sleep(1 * time.Second)
 	}
 }
