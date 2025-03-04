@@ -1,2 +1,2 @@
-- use distributed cache to handle high volume of messages, store IDs (deduplication), TTL to expire old IDs
-- producer should also handle a graceful shutdown
+- Use OTEL for metrics
+- Exactly once design...
